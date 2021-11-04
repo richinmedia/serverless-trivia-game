@@ -77,6 +77,7 @@ module "games_detail_table" {
   range_key_type                = "N"
   autoscale_min_read_capacity   = 5
   autoscale_min_write_capacity  = 5
+  tags                          = local.tags
 }
 
 module "high_score_table" {
@@ -107,6 +108,7 @@ module "high_score_table" {
                                       non_key_attributes  = []
                                     }
                                   ]
+  tags                          = local.tags
 }
 
 module "game_players_table" {
@@ -135,6 +137,7 @@ module "game_players_table" {
                                       non_key_attributes  = []
                                     }
                                   ]
+  tags                          = local.tags
 }
 
 module "player_table" {
@@ -146,6 +149,7 @@ module "player_table" {
   hash_key_type                 = "S"
   autoscale_min_read_capacity   = 6
   autoscale_min_write_capacity  = 6
+  tags                          = local.tags
 }
 
 module "player_wallet_table" {
@@ -157,6 +161,7 @@ module "player_wallet_table" {
   hash_key_type                 = "S"
   autoscale_min_read_capacity   = 6
   autoscale_min_write_capacity  = 6
+  tags                          = local.tags
 }
 
 module "player_progress_table" {
@@ -185,6 +190,7 @@ module "player_progress_table" {
                                       non_key_attributes  = []
                                     }
                                   ]
+  tags                          = local.tags
 }
 
 module "player_inventory_table" {
@@ -198,6 +204,7 @@ module "player_inventory_table" {
   range_key_type                = "S"
   autoscale_min_read_capacity   = 6
   autoscale_min_write_capacity  = 6
+  tags                          = local.tags
 }
 
 module "subscription_table" {
@@ -211,6 +218,7 @@ module "subscription_table" {
   range_key_type                = "S"
   autoscale_min_read_capacity   = 5
   autoscale_min_write_capacity  = 5
+  tags                          = local.tags
 }
 
 module "marketplace_table" {
@@ -224,4 +232,5 @@ module "marketplace_table" {
   range_key_type                = "S"
   autoscale_min_read_capacity   = 6
   autoscale_min_write_capacity  = 6
+  tags                          = local.tags
 }
