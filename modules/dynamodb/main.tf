@@ -19,8 +19,10 @@ resource "aws_resourcegroups_group" "dynamodb" {
     "AWS::DynamoDB::Table"
   ],
   "TagFilters": [
-    "Key": "product",
-    "Values": [${var.product}]
+    {
+      "Key": "product",
+      "Values": ["${var.product}"]
+    }
   ]
 }
 JSON
