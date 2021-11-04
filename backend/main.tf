@@ -36,3 +36,11 @@ module "dynamodb" {
   resource_group_name = "${var.resource_group_prefix}-DynamoDB"
   tags                = local.tags
 }
+
+######### SNS Topics #########
+
+module "sns" {
+  source = "../modules/sns"
+  
+  tags                = local.tags
+}
