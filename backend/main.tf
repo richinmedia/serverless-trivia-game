@@ -15,8 +15,10 @@ resource "aws_resourcegroups_group" "main" {
     query = <<JSON
 {
   "TagFilters": [
-    "Key": "product",
-    "Values": [${var.product}]
+    {
+      "Key": "product",
+      "Values": ["${var.product}"]
+    }
   ]
 }
 JSON
