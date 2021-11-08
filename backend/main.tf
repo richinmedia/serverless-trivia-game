@@ -27,6 +27,10 @@ JSON
   }
 }
 
+resource "aws_cloudwatch_event_bus" "name" {
+  name = var.service_abbr
+}
+
 ####### DynamoDB Tables #######
 
 module "dynamodb" {
@@ -42,5 +46,15 @@ module "dynamodb" {
 module "sns" {
   source = "../modules/sns"
   
+  tags                = local.tags
+}
+
+######### Player Avatar Service #########
+module "name" {
+  source = "../modules/player-avatar"
+
+  product             = var.product
+  resource_group_name = "${var.resource_group_prefix}-PlayerAvatar"
+  log_retention_days  = var.log_retention_days
   tags                = local.tags
 }

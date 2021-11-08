@@ -5,7 +5,7 @@ variable "region" {
 
 variable "product" {
   type = string
-  default = "Serverless Trivia Game"
+  default = "qwizardly"
 }
 
 variable "terraform_version" {
@@ -23,6 +23,12 @@ variable "resource_group_prefix" {
   description = "Name of the Resource Group prefix"
   type        = string
   default     = "game-service"
+}
+
+variable "service_abbr" {
+  description = "Service abbriviation"
+  type        = string
+  default     = "sts"
 }
 
 variable "emf_namespace" {
