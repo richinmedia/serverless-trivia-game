@@ -6,6 +6,7 @@ locals {
     terraform = "Provisioned by Terraform ${var.terraform_version}"
   }
 }
+
 resource "aws_resourcegroups_group" "main" {
   name = "${var.resource_group_prefix}-Main"
   tags = local.tags
@@ -50,7 +51,7 @@ module "sns" {
 }
 
 ######### Player Avatar Service #########
-module "name" {
+module "player_avatar_service" {
   source = "../modules/player-avatar"
 
   product             = var.product

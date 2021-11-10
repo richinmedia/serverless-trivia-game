@@ -5,12 +5,15 @@ locals {
   tags          = merge(
                     var.tags,
                     {
-                      service = local.service
+                      service             = local.service
+                      application_name    = "player-avatar"
                     }
                   )
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 
 resource "aws_resourcegroups_group" "player_avatar" {
   name = var.resource_group_name
@@ -33,7 +36,10 @@ JSON
   }
 }
 
-// PlayerAvatarBucket
+##########################
+# Player Avatar S3 Bucket
+##########################
+
 resource "aws_s3_bucket" "bucket" {
   bucket  = "${local.service}-bucket"
   acl     = "private"
@@ -80,10 +86,10 @@ resource "aws_s3_bucket_policy" "bucket_policy" {
   policy = data.aws_iam_policy_document.bucket.json
 }
 
-// PlayerAvatarLoggingBucket
 resource "aws_s3_bucket" "log_bucket" {
-  bucket  = "${local.service}-log-bucket"
-  acl     = "private"
+  bucket        = "${local.service}-log-bucket"
+  acl           = "private"
+  force_destroy = true
 
   tags  = merge(
     local.tags,
@@ -94,7 +100,6 @@ resource "aws_s3_bucket" "log_bucket" {
   )
 }
 
-// PlayerAvatarLoggingBucketPolicy
 data "aws_iam_policy_document" "log_bucket" {
   version         = "2012-10-17"
 
@@ -140,7 +145,10 @@ resource "aws_s3_bucket_policy" "log_bucket_policy" {
   policy = data.aws_iam_policy_document.log_bucket.json
 }
 
-// PlayerAvatarDistribution
+########################################
+# Player Avatar Cloudfront Distribution
+########################################
+
 resource "aws_cloudfront_distribution" "cloudfront_distribution" {
   enabled         = true
   is_ipv6_enabled = true
@@ -189,7 +197,7 @@ resource "aws_cloudfront_distribution" "cloudfront_distribution" {
   tags = merge(
     local.tags,
     {
-      application_type = "Cloudfront"
+      application_type = "cloudfront"
     }
   )
 }
@@ -198,7 +206,277 @@ resource "aws_cloudfront_origin_access_identity" "cloudfront_oai" {
   comment = "Origin Access Identity for ${local.service}"
 }
 
-// PlayerAvatarLogGroup
+###########################
+# Player Avatar Cloudtrail
+###########################
+
+resource "aws_cloudtrail" "trail" {
+  name                          = "${aws_s3_bucket.bucket.bucket}-Trail"
+  s3_bucket_name                = aws_s3_bucket.log_bucket.id
+  include_global_service_events = false
+  enable_logging                = true
+  is_multi_region_trail         = false
+
+  event_selector {
+    read_write_type = "All"
+    include_management_events = false
+
+    data_resource {
+      type = "AWS::S3::Object"
+
+      values = [ "${aws_s3_bucket.bucket.arn}/" ]
+    }
+  }
+
+  depends_on = [
+    aws_s3_bucket_policy.bucket_policy
+  ]
+}
+
+#################################
+# Player Avatar Lambda Functions
+#################################
+
+module "player_avatar_moderate_function" {
+  source = "terraform-aws-modules/lambda/aws"
+
+  function_name = "player-avatar-moderate"
+  description   = "Detects inappropriate content in an image."
+  handler       = "index.lambda_handler"
+  runtime       = "python3.8"
+
+  memory_size   = 1024
+  timeout       = 10
+
+  cloudwatch_logs_retention_in_days = var.log_retention_days
+
+  tracing_mode          = "Active"
+  attach_tracing_policy = true
+
+  source_path   = "${path.module}/functions/player-avatar-moderate"
+  artifacts_dir = "${path.root}/.terraform/lambda-builds/"
+
+  layers = [ "arn:aws:lambda:${data.aws_region.current.name}:580247275435:layer:LambdaInsightsExtension:14" ]
+
+  role_name = "player-avatar-moderate-role"
+  
+  attach_policies     = true
+  policies            = [
+                          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                          "arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy"
+                        ]
+  number_of_policies  = 2
+
+  attach_policy_statements = true
+  policy_statements = {
+    s3_read = {
+      effect    = "Allow",
+      actions   = [
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                    "s3:GetObjectVersion",
+                    "s3:GetLifecycleConfiguration"
+                  ],
+      resources = [
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}",
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}/*"
+                  ]
+    },
+    s3_write = {
+      effect    = "Allow",
+      actions   = [
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:PutLifecycleConfiguration"
+                  ],
+      resources = [
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}",
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}/*"
+                  ]
+    },
+    rekognition_detect_moderation_labels = {
+      effect    = "Allow",
+      actions   = [ "rekognition:DetectModerationLabels" ],
+      resources = [ "*" ]
+    }
+  }
+
+  environment_variables = {
+    PLAYER_AVATAR_BUCKET = aws_s3_bucket.bucket.arn
+  }
+
+  tags = merge(
+    local.tags,
+    {
+      application_type    = "lambda"
+      os                  = "python"
+      application_version = "3.8"
+      application_name    = "player-avatar-moderate"
+    }
+  )
+}
+
+module "player_avatar_moderate_function_alias" {
+  source = "terraform-aws-modules/lambda/aws//modules/alias"
+  
+  refresh_alias     = false
+  name              = "HTTPLive"
+
+  function_name     = module.player_avatar_moderate_function.lambda_function_name
+  function_version  = module.player_avatar_moderate_function.lambda_function_version
+}
+
+module "player_avatar_thumbnail_function" {
+  source = "terraform-aws-modules/lambda/aws"
+
+  function_name = "player-avatar-thumbnail"
+  description   = "Creates a thumbnail from users avatar image."
+  handler       = "index.lambda_handler"
+  runtime       = "python3.8"
+
+  memory_size   = 1024
+  timeout       = 10
+
+  cloudwatch_logs_retention_in_days = var.log_retention_days
+
+  tracing_mode          = "Active"
+  attach_tracing_policy = true
+
+  source_path   = "${path.module}/functions/player-avatar-thumbnail"
+  artifacts_dir = "${path.root}/.terraform/lambda-builds/"
+
+  layers = [ "arn:aws:lambda:${data.aws_region.current.name}:580247275435:layer:LambdaInsightsExtension:14" ]
+
+  role_name = "player-avatar-thumbnail-role"
+  
+  attach_policies     = true
+  policies            = [
+                          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                          "arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy"
+                        ]
+  number_of_policies  = 2
+
+  attach_policy_statements = true
+  policy_statements = {
+    s3_crud = {
+      effect    = "Allow",
+      actions   = [
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                    "s3:GetObjectVersion",
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:GetLifecycleConfiguration",
+                    "s3:PutLifecycleConfiguration",
+                    "s3:DeleteObject"
+                  ],
+      resources = [
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}",
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}/*"
+                  ]
+    }
+  }
+
+  tags = merge(
+    local.tags,
+    {
+      application_type    = "lambda"
+      os                  = "python"
+      application_version = "3.8"
+      application_name    = "player-avatar-thumbnail"
+    }
+  )
+}
+
+module "player_avatar_thumbnail_function_alias" {
+  source = "terraform-aws-modules/lambda/aws//modules/alias"
+  
+  refresh_alias     = false
+  name              = "HTTPLive"
+
+  function_name     = module.player_avatar_thumbnail_function.lambda_function_name
+  function_version  = module.player_avatar_thumbnail_function.lambda_function_version
+}
+
+module "player_avatar_delete_function" {
+  source = "terraform-aws-modules/lambda/aws"
+
+  function_name = "player-avatar-delete"
+  description   = "Delete users avatar image."
+  handler       = "index.lambda_handler"
+  runtime       = "python3.8"
+
+  memory_size   = 1024
+  timeout       = 10
+
+  cloudwatch_logs_retention_in_days = var.log_retention_days
+
+  tracing_mode          = "Active"
+  attach_tracing_policy = true
+
+  source_path   = "${path.module}/functions/player-avatar-delete"
+  artifacts_dir = "${path.root}/.terraform/lambda-builds/"
+
+  layers = [ "arn:aws:lambda:${data.aws_region.current.name}:580247275435:layer:LambdaInsightsExtension:14" ]
+
+  role_name = "player-avatar-delete-role"
+  
+  attach_policies     = true
+  policies            = [
+                          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+                          "arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy"
+                        ]
+  number_of_policies  = 2
+
+  attach_policy_statements = true
+  policy_statements = {
+    s3_crud = {
+      effect    = "Allow",
+      actions   = [
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:GetBucketLocation",
+                    "s3:GetObjectVersion",
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:GetLifecycleConfiguration",
+                    "s3:PutLifecycleConfiguration",
+                    "s3:DeleteObject"
+                  ],
+      resources = [
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}",
+                    "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}/*"
+                  ]
+    }
+  }
+
+  tags = merge(
+    local.tags,
+    {
+      application_type    = "lambda"
+      os                  = "python"
+      application_version = "3.8"
+      application_name    = "player-avatar-delete"
+    }
+  )
+}
+
+module "player_avatar_delete_function_alias" {
+  source = "terraform-aws-modules/lambda/aws//modules/alias"
+  
+  refresh_alias     = false
+  name              = "HTTPLive"
+
+  function_name     = module.player_avatar_delete_function.lambda_function_name
+  function_version  = module.player_avatar_delete_function.lambda_function_version
+}
+
+##############################
+# Player Avatar State Machine
+##############################
+
 resource "aws_cloudwatch_log_group" "log_group" {
   name              = "/${var.product}/statemachines/${local.service}"
   retention_in_days = var.log_retention_days
@@ -206,20 +484,10 @@ resource "aws_cloudwatch_log_group" "log_group" {
   tags = merge(
     local.tags,
     {
-      application_type = "Cloudwatch"
+      application_type = "cloudwatch"
     }
   )
 }
-
-// PlayerAvatarTrail
-// Requires
-// - PlayerAvatarBucketPolicy
-// - PlayerAvatarLoggingBucket
-
-// PlayerAvatarModerateFunction
-// Requires
-// - Player Avatar S3 bucket
-// - Cloudwatch Lambda insight exec role policy
 
 // PlayerAvatarStateMachine
 // Requires
